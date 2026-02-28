@@ -9,7 +9,7 @@ const PORT = process.env.PORT || 3000;
 const distPath = path.join(__dirname, 'frontend', 'dist');
 
 console.log('='.repeat(50));
-console.log('Settlement Operation Guide Server');
+console.log('Settlement Operation Guide Server v1.0');
 console.log('='.repeat(50));
 console.log(`Node version: ${process.version}`);
 console.log(`Working directory: ${__dirname}`);
