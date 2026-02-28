@@ -8,11 +8,6 @@ const router = createRouter({
       redirect: '/transactions'
     },
     {
-      path: '/demo',
-      name: 'demo',
-      component: () => import('../views/ComponentDemo.vue')
-    },
-    {
       path: '/transactions',
       name: 'transaction-summary',
       component: () => import('../views/TransactionSummaryNew.vue')

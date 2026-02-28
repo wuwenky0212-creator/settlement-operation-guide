@@ -69,17 +69,6 @@ settlement-operation-guide/
 
 详细说明：[RAILWAY_SETUP_GUIDE.md](./RAILWAY_SETUP_GUIDE.md)
 
-### Vercel 部署（仅前端）
-
-如果只需要部署前端：
-
-1. 导入 GitHub 仓库到 Vercel
-2. Root Directory: `frontend`
-3. Build Command: `npm run build`
-4. Output Directory: `dist`
-
-详细说明：[VERCEL_DEPLOYMENT.md](./VERCEL_DEPLOYMENT.md)
-
 ## 🛠️ 技术栈
 
 ### 前端
@@ -130,10 +119,7 @@ uvicorn app.main:app --reload
 
 ## 📚 文档
 
-- [Railway 部署指南](./RAILWAY_DEPLOYMENT.md) - 完整的 Railway 部署说明
-- [Railway 设置指南](./RAILWAY_SETUP_GUIDE.md) - 详细的配置说明
-- [Railway 快速修复](./RAILWAY_QUICK_FIX.md) - 常见问题解决
-- [Vercel 部署指南](./VERCEL_DEPLOYMENT.md) - 前端部署到 Vercel
+- [Railway 设置指南](./RAILWAY_SETUP_GUIDE.md) - Railway 部署配置说明
 - [项目结构说明](./PROJECT_STRUCTURE.md) - 详细的项目结构
 - [用户手册](./USER_MANUAL.md) - 系统使用说明
 - [FAQ](./FAQ.md) - 常见问题
