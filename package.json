@@ -2,9 +2,8 @@
   "name": "settlement-operation-guide",
   "version": "1.0.0",
   "scripts": {
-    "build": "cd frontend && npm install && npm run build",
-    "start": "node server.js",
-    "postinstall": "npm run build"
+    "build": "bash build.sh || build.bat",
+    "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.18.2"

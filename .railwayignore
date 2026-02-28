@@ -1,0 +1,41 @@
+# Railway ignore file
+# These files won't be uploaded to Railway
+
+# Development files
+.git/
+.vscode/
+.kiro/
+
+# Documentation
+*.md
+!README.md
+
+# Local environment
+.env
+.env.local
+
+# Test files
+**/__tests__/
+**/tests/
+*.test.js
+*.spec.js
+
+# Python cache
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.hypothesis/
+
+# Node modules (will be installed during build)
+**/node_modules/
+
+# Build artifacts (will be created during build)
+frontend/dist/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
