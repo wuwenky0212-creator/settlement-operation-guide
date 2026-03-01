@@ -95,42 +95,143 @@ class StatusTrackingService:
         )
     
     def _generate_status_receipts(self, transaction) -> List[StatusReceipt]:
-        """生成状态回执列表"""
+        """生成状态回执列表 - 更新为3节点流程"""
         receipts = []
         
-        # 1. SWIFT证实回执状态（如果证实方式为SWIFT）
-        if transaction.confirmation_type == ConfirmationType.SWIFT:
+        # 节点1: 后台复核
+        receipts.extend(self._generate_back_office_validation_receipts(transaction))
+        
+        # 节点2: SWIFT证实回执状态（仅适用于外汇掉期和拆借交易）
+        if self._is_swap_or_lending_product(transaction):
             receipts.extend(self._generate_swift_confirmation_receipts(transaction))
         
-        # 2. 证实匹配状态
+        # 节点3: 证实匹配
         receipts.extend(self._generate_match_receipts(transaction))
-        
-        # 3. 收付发报回执状态（根据结算方式）
-        receipts.extend(self._generate_settlement_receipts(transaction))
         
         return receipts
     
-    def _generate_swift_confirmation_receipts(self, transaction) -> List[StatusReceipt]:
-        """生成SWIFT证实回执"""
+    def _is_swap_or_lending_product(self, transaction) -> bool:
+        """判断是否为外汇掉期或拆借产品"""
+        return transaction.product in [
+            ProductType.FX_SWAP,
+            ProductType.INTERBANK_LENDING
+        ]
+    
+    def _generate_back_office_validation_receipts(self, transaction) -> List[StatusReceipt]:
+        """生成后台复核回执"""
         receipts = []
         
-        rmc_receipt = StatusReceipt(
-            stage='SWIFT证实-发送RMC',
-            status='SUCCESS',
-            timestamp=transaction.last_modified_date,
-            message='RMC发送成功',
-            can_proceed=True
-        )
+        # 根据交易状态判断复核状态
+        # 简化处理：这里应该根据实际的复核状态字段判断
+        back_office_status = transaction.back_office_status
+        
+        if back_office_status == '复核中':
+            receipt = StatusReceipt(
+                stage='后台复核',
+                status='PROCESSING',
+                timestamp=transaction.entry_date,
+                message='等待结算员核对交易要素与清算路径',
+                can_proceed=False
+            )
+        elif back_office_status == '复核通过':
+            receipt = StatusReceipt(
+                stage='后台复核',
+                status='SUCCESS',
+                timestamp=transaction.last_modified_date,
+                message='交易复核通过，触发后续证实流程',
+                can_proceed=True
+            )
+        elif back_office_status == '已删除':
+            receipt = StatusReceipt(
+                stage='后台复核',
+                status='FAILED',
+                timestamp=transaction.last_modified_date,
+                message='交易已被删除，流程已终结',
+                can_proceed=False
+            )
+        else:
+            # 默认为复核通过
+            receipt = StatusReceipt(
+                stage='后台复核',
+                status='SUCCESS',
+                timestamp=transaction.last_modified_date,
+                message='交易复核通过',
+                can_proceed=True
+            )
+        
+        receipts.append(receipt)
+        return receipts
+    
+    def _generate_swift_confirmation_receipts(self, transaction) -> List[StatusReceipt]:
+        """生成SWIFT证实回执 - 更新为RMC→FTM串行逻辑"""
+        receipts = []
+        
+        # 简化处理：这里应该根据实际的SWIFT回执状态判断
+        # 假设有swift_rmc_status和swift_ftm_status字段
+        
+        # RMC回执
+        rmc_status = getattr(transaction, 'swift_rmc_status', 'SUCCESS')
+        
+        if rmc_status == 'SENDING':
+            rmc_receipt = StatusReceipt(
+                stage='SWIFT证实回执-RMC',
+                status='PROCESSING',
+                timestamp=transaction.last_modified_date,
+                message='RMC发送中',
+                can_proceed=False
+            )
+        elif rmc_status == 'FAILED':
+            rmc_receipt = StatusReceipt(
+                stage='SWIFT证实回执-RMC',
+                status='FAILED',
+                timestamp=transaction.last_modified_date,
+                message='RMC回执失败，流程已阻断，无后续FTM回执',
+                can_proceed=False
+            )
+            receipts.append(rmc_receipt)
+            # RMC失败时不添加FTM节点
+            return receipts
+        else:  # SUCCESS
+            rmc_receipt = StatusReceipt(
+                stage='SWIFT证实回执-RMC',
+                status='SUCCESS',
+                timestamp=transaction.last_modified_date,
+                message='RMC回执成功，自动触发FTM发送',
+                can_proceed=True
+            )
+        
         receipts.append(rmc_receipt)
         
-        ftm_receipt = StatusReceipt(
-            stage='SWIFT证实-发送FTM',
-            status='SUCCESS',
-            timestamp=transaction.last_modified_date,
-            message='FTM发送成功',
-            can_proceed=True
-        )
-        receipts.append(ftm_receipt)
+        # FTM回执（仅当RMC成功时）
+        if rmc_status == 'SUCCESS':
+            ftm_status = getattr(transaction, 'swift_ftm_status', 'SUCCESS')
+            
+            if ftm_status == 'SENDING':
+                ftm_receipt = StatusReceipt(
+                    stage='SWIFT证实回执-FTM',
+                    status='PROCESSING',
+                    timestamp=transaction.last_modified_date,
+                    message='FTM发送中',
+                    can_proceed=False
+                )
+            elif ftm_status == 'FAILED':
+                ftm_receipt = StatusReceipt(
+                    stage='SWIFT证实回执-FTM',
+                    status='FAILED',
+                    timestamp=transaction.last_modified_date,
+                    message='FTM回执失败，报文传输中断，需要补发处理',
+                    can_proceed=False
+                )
+            else:  # SUCCESS
+                ftm_receipt = StatusReceipt(
+                    stage='SWIFT证实回执-FTM',
+                    status='SUCCESS',
+                    timestamp=transaction.last_modified_date,
+                    message='FTM回执成功，报文正式送出',
+                    can_proceed=True
+                )
+            
+            receipts.append(ftm_receipt)
         
         return receipts
     
@@ -145,7 +246,7 @@ class StatusTrackingService:
                 stage='证实匹配',
                 status='SUCCESS',
                 timestamp=transaction.last_modified_date,
-                message='匹配成功',
+                message='证实匹配成功，流程闭环',
                 can_proceed=True
             )
         elif match_status == MatchStatus.UNMATCHED:
@@ -153,78 +254,29 @@ class StatusTrackingService:
                 stage='证实匹配',
                 status='FAILED',
                 timestamp=transaction.last_modified_date,
-                message='匹配失败，不可进行后续流程',
+                message='匹配失败，需要结算员执行人工匹配或撤销处理',
                 can_proceed=False
             )
-        else:
-            receipt = StatusReceipt(
-                stage='证实匹配',
-                status='WAITING',
-                timestamp=None,
-                message='等待匹配',
-                can_proceed=False
-            )
+        else:  # PENDING or None
+            # 检查是否在匹配中
+            if hasattr(transaction, 'matching_in_progress') and transaction.matching_in_progress:
+                receipt = StatusReceipt(
+                    stage='证实匹配',
+                    status='PROCESSING',
+                    timestamp=transaction.last_modified_date,
+                    message='系统正在对对手方报文进行自动打分',
+                    can_proceed=False
+                )
+            else:
+                receipt = StatusReceipt(
+                    stage='证实匹配',
+                    status='WAITING',
+                    timestamp=None,
+                    message='等待系统自动匹配',
+                    can_proceed=False
+                )
         
         receipts.append(receipt)
-        return receipts
-    
-    def _generate_settlement_receipts(self, transaction) -> List[StatusReceipt]:
-        """生成收付发报回执"""
-        receipts = []
-        settlement_method = transaction.settlement_method
-        
-        needs_swift = settlement_method in [
-            SettlementMethod.GROSS,
-            SettlementMethod.NET,
-            SettlementMethod.CENTRALIZED
-        ]
-        
-        if needs_swift:
-            aml_receipt = StatusReceipt(
-                stage='反洗钱检查',
-                status='SUCCESS',
-                timestamp=transaction.last_modified_date,
-                message='反洗钱检查通过，可结算发报',
-                can_proceed=True
-            )
-            receipts.append(aml_receipt)
-            
-            swift_rmc_receipt = StatusReceipt(
-                stage='收付发报-发送RMC',
-                status='SUCCESS',
-                timestamp=transaction.last_modified_date,
-                message='RMC发送成功，可收到后续回执',
-                can_proceed=True
-            )
-            receipts.append(swift_rmc_receipt)
-            
-            swift_ftm_receipt = StatusReceipt(
-                stage='收付发报-发送FTM',
-                status='SUCCESS',
-                timestamp=transaction.last_modified_date,
-                message='FTM发送成功',
-                can_proceed=True
-            )
-            receipts.append(swift_ftm_receipt)
-            
-            core_receipt = StatusReceipt(
-                stage='核心入账',
-                status='SUCCESS',
-                timestamp=transaction.last_modified_date,
-                message='入账成功',
-                can_proceed=True
-            )
-            receipts.append(core_receipt)
-        else:
-            core_receipt = StatusReceipt(
-                stage='核心入账',
-                status='SUCCESS',
-                timestamp=transaction.last_modified_date,
-                message='入账成功',
-                can_proceed=True
-            )
-            receipts.append(core_receipt)
-        
         return receipts
     
     def _generate_legacy_flow_nodes(
@@ -357,9 +409,10 @@ class StatusTrackingService:
             return 'SWIFT'
     
     def _generate_netting_stage(self, cash_flow) -> Optional[NettingStage]:
-        """生成阶段1: 清算轧差"""
+        """生成阶段1: 清算轧差 - 包含前置准入、轧差执行、发报时机计算"""
         current_status = cash_flow.current_status
         
+        # 1.1 前置准入节点判断逻辑
         # 判断产品类型
         # 简化：这里应该从关联的交易中获取产品类型
         product_type = "外汇/拆借"  # 或 "现券/回购"
@@ -374,6 +427,7 @@ class StatusTrackingService:
             condition_met=condition_met
         )
         
+        # 1.2 轧差执行节点
         # 判断轧差类型和状态
         if current_status in [CashFlowStatus.PENDING_NETTING]:
             netting_type = 'AUTO'
@@ -387,10 +441,32 @@ class StatusTrackingService:
             netting_type = 'MANUAL'
             status = '手工轧差完成'
             timestamp = cash_flow.last_modified_date
-        elif current_status in [CashFlowStatus.PENDING_DISPATCH]:
-            netting_type = 'AUTO'  # 简化
-            status = '待发报'
-            timestamp = cash_flow.last_modified_date
+        elif current_status == CashFlowStatus.PENDING_DISPATCH:
+            # 1.3 发报时机计算节点
+            # 检查是否到达发报日
+            # 简化：这里应该根据实际的发报预定日判断
+            dispatch_date = getattr(cash_flow, 'dispatch_date', None)
+            settlement_date = getattr(cash_flow, 'settlement_date', None)
+            
+            if dispatch_date and settlement_date:
+                from datetime import datetime
+                today = datetime.now().date()
+                
+                if today < dispatch_date:
+                    # 未达发报日
+                    netting_type = 'AUTO'
+                    status = '待达发报日'
+                    timestamp = cash_flow.last_modified_date
+                else:
+                    # 到达发报日
+                    netting_type = 'AUTO'
+                    status = '待发报'
+                    timestamp = cash_flow.last_modified_date
+            else:
+                # 默认为待发报
+                netting_type = 'AUTO'
+                status = '待发报'
+                timestamp = cash_flow.last_modified_date
         else:
             # 已经过了轧差阶段
             netting_type = 'AUTO'
@@ -406,32 +482,37 @@ class StatusTrackingService:
 
     
     def _generate_compliance_stage(self, cash_flow, sending_route: str) -> Optional[ComplianceStage]:
-        """生成阶段2: 合规准入"""
+        """生成阶段2: 合规准入 - 包含准入数据上送、反洗钱扫描、SSI路径判定、路径决策与发送准入"""
         current_status = cash_flow.current_status
         
-        # 反洗钱检查
+        # 2.1 准入数据上送节点
+        # 简化：这里应该根据实际的数据上送状态判断
+        data_submission_status = getattr(cash_flow, 'aml_data_submission_status', 'SUCCESS')
+        
+        # 2.2 反洗钱扫描/校验节点
         aml_check = None
         if current_status == CashFlowStatus.COMPLIANCE_CHECKING:
             aml_check = AMLCheck(
                 status='CHECKING',
                 timestamp=cash_flow.last_modified_date,
-                message='正在进行反洗钱检查'
+                message='正在进行反洗钱检查（黑名单比对、制裁名单扫描、风险模型计算）'
             )
         elif current_status == CashFlowStatus.COMPLIANCE_BLOCKED:
+            # 2.3 校验结果判定与硬拦截
             aml_check = AMLCheck(
                 status='BLOCKED',
                 timestamp=cash_flow.last_modified_date,
-                message='反洗钱检查失败，已阻断'
+                message='触发反洗钱硬拦截，流程已终止'
             )
         elif current_status in [CashFlowStatus.COMPLIANCE_APPROVED, CashFlowStatus.ROUTE_DETERMINED,
                                 CashFlowStatus.PENDING_APPROVAL, CashFlowStatus.APPROVAL_APPROVED]:
             aml_check = AMLCheck(
                 status='APPROVED',
                 timestamp=cash_flow.last_modified_date,
-                message='反洗钱检查通过'
+                message='合规校验通过，所有风险检查均通过'
             )
         
-        # 路径决策
+        # 2.4 SSI路径自动判定节点
         route_decision = None
         if current_status in [CashFlowStatus.ROUTE_DETERMINED, CashFlowStatus.PENDING_APPROVAL,
                              CashFlowStatus.APPROVAL_APPROVED, CashFlowStatus.APPROVAL_REJECTED]:
@@ -440,26 +521,34 @@ class StatusTrackingService:
                 timestamp=cash_flow.last_modified_date
             )
         
-        # 人工审批
+        # 2.5 路径决策与发送准入
+        # 分支A: SWIFT路径人工审批 (2.5a)
+        # 分支B: CBMNet路径线下处理 (2.5b)
         manual_approval = None
-        if current_status == CashFlowStatus.PENDING_APPROVAL:
-            manual_approval = ManualApproval(
-                status='PENDING',
-                timestamp=cash_flow.last_modified_date,
-                approver=None
-            )
-        elif current_status == CashFlowStatus.APPROVAL_APPROVED:
-            manual_approval = ManualApproval(
-                status='APPROVED',
-                timestamp=cash_flow.last_modified_date,
-                approver='系统管理员'  # 简化
-            )
-        elif current_status == CashFlowStatus.APPROVAL_REJECTED:
-            manual_approval = ManualApproval(
-                status='REJECTED',
-                timestamp=cash_flow.last_modified_date,
-                approver='系统管理员'  # 简化
-            )
+        if sending_route == 'SWIFT':
+            # SWIFT路径需要人工审批
+            if current_status == CashFlowStatus.PENDING_APPROVAL:
+                manual_approval = ManualApproval(
+                    status='PENDING',
+                    timestamp=cash_flow.last_modified_date,
+                    approver=None
+                )
+            elif current_status == CashFlowStatus.APPROVAL_APPROVED:
+                manual_approval = ManualApproval(
+                    status='APPROVED',
+                    timestamp=cash_flow.last_modified_date,
+                    approver='系统管理员'  # 简化
+                )
+            elif current_status == CashFlowStatus.APPROVAL_REJECTED:
+                manual_approval = ManualApproval(
+                    status='REJECTED',
+                    timestamp=cash_flow.last_modified_date,
+                    approver='系统管理员'  # 简化
+                )
+        elif sending_route == 'CBMNet':
+            # CBMNet路径需要人工确认
+            # 这部分逻辑在settlement_stage中处理
+            pass
         
         if aml_check or route_decision or manual_approval:
             return ComplianceStage(
